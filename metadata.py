@@ -1,0 +1,12 @@
+batch_size = 128
+temperature = 1.0
+seed = 0
+log_interval = 100
+log_interval_writer = 100
+hard = False
+_lambda = 1
+# latent_dim = 20
+# categorical_dim = 2
+temp_min = 0.5
+ANNEAL_RATE = 0.00003
+learning_rate = 1e-3
