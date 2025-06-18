@@ -230,35 +230,75 @@ def find_peaks_from_empirical_distribution(
 
 
 
-def get_peaks_data(model, data_loader, device, weights_type='probabilities', return_peaks=False, **kwargs):
+def get_peaks_data(
+    model, data_loader, device, 
+    weights_type='probabilities', 
+    return_peaks=False, 
+    peaks_kwargs=None, 
+    kl_kwargs=None, 
+    **kwargs
+):
+    """
+    peaks_kwargs: dict, passed to find_peaks_from_empirical_distribution
+    kl_kwargs: dict, passed to calculate_kl_divergence_with_HFM
+    Any remaining kwargs are ignored.
+    """
+    if peaks_kwargs is None:
+        peaks_kwargs = {}
+    if kl_kwargs is None:
+        kl_kwargs = {}
+
     empirical_probs, total_samples = get_empirical_latent_distribution(model, data_loader, device)
-    peaks = find_peaks_from_empirical_distribution(empirical_probs, **kwargs)
+    peaks = find_peaks_from_empirical_distribution(empirical_probs, **peaks_kwargs)
     peaks_number = [len(peaks)]
     peaks_KL = []
     peaks_entropy = []
     weights = []
+    peaks_logh_mean = []
     
-    for peak in range(len(peaks)):
-        peak_KL, peak_entropy = calculate_kl_divergence_with_HFM(peaks[peak]['states_and_probs'], normalize_theoricalHFM=True, return_emp_distr_entropy=True)
+    for peak in peaks:
+        peak_KL, peak_entropy = calculate_kl_divergence_with_HFM(
+            peak['states_and_probs'], 
+            normalize_theoricalHFM=True, 
+            return_emp_distr_entropy=True, 
+            **kl_kwargs
+        )
         peaks_KL.append(peak_KL.tolist())
         peaks_entropy.append(peak_entropy.tolist())
+        peaks_logh_mean.append((peak_KL + peak_entropy).tolist())
         #weights
         if weights_type == 'peak_length':
-            weights.append(peaks[peak]['number_of_states'])
+            weights.append(peak['number_of_states'])
         elif weights_type == 'probabilities':
-            weights.append(peaks[peak]['weight'])
+            weights.append(peak['weight'])
         else:
             raise Exception("'weights' should be 'peaks_length' or 'probabilities'")
 
     layer_number = [model.num_hidden_layers]
     layer_values = [layer_number[0]] * len(peaks_KL)
     average_KL = [np.average(peaks_KL, weights=weights)]
-    total_KL_and_entropy  = calculate_kl_divergence_with_HFM(empirical_probs, normalize_theoricalHFM=True, return_emp_distr_entropy=True)
+    average_entropy = [np.average(peaks_entropy)]
+    average_logh_mean = [np.average(peaks_logh_mean)]
+    total_KL_and_entropy  = calculate_kl_divergence_with_HFM(
+        empirical_probs, 
+        normalize_theoricalHFM=True, 
+        return_emp_distr_entropy=True, 
+        **kl_kwargs
+    )
     total_KL, total_entropy = [total_KL_and_entropy[0]], [total_KL_and_entropy[1]]
 
-    
-    data_dict = {'num_layers':layer_number, 'layer_values':layer_values, 'peaks_KL':peaks_KL, 'peaks_entropy':peaks_entropy, 'average_KL':average_KL,
-                 'total_KL':total_KL, 'total_entropy':total_entropy, 'peaks_number':peaks_number}
+    data_dict = {
+        'num_layers': layer_number,
+        'layer_values': layer_values,
+        'peaks_KL': peaks_KL,
+        'peaks_entropy': peaks_entropy,
+        'average_KL': average_KL,
+        'total_KL': total_KL,
+        'total_entropy': total_entropy,
+        'peaks_number': peaks_number,
+        'peaks_entropy_average': average_entropy,
+        'peaks_logh_mean_average': average_logh_mean,
+        }
     
     if return_peaks:
         data_dict['peaks'] = peaks
@@ -274,7 +314,7 @@ def accumulate_peaks_data(data_dict, current_data_dict):
     return
 
 
-def plot_peaks_data(data_dict):
+def plot_peaks_data(data_dict, plot_peaks_averages=False):
 
     fig, ax1 = plt.subplots(figsize=(12,5))
 
@@ -282,6 +322,9 @@ def plot_peaks_data(data_dict):
     ax1.plot(data_dict['num_layers'], data_dict['average_KL'], color='red', label='KL averaged over peaks')
     ax1.plot(data_dict['num_layers'], data_dict['total_KL'], c='blue', label='total_KL')
     ax1.scatter(data_dict['num_layers'], data_dict['total_KL'], c=data_dict['total_entropy'], s=200)
+    if plot_peaks_averages:
+        ax1.plot(data_dict['num_layers'], data_dict['peaks_entropy_average'], color='green', label='average entropy')
+        ax1.plot(data_dict['num_layers'], data_dict['peaks_logh_mean_average'], color='orange', label='average logH_mean')
    
     cbar = fig.colorbar(scatter)
     cbar.set_label('Entropy H(s)', rotation=270, labelpad=15)

@@ -189,7 +189,7 @@ class VAE_priorHFM(nn.Module):
         self.input_dim = input_dim
         self.latent_dim = latent_dim
         self.categorical_dim = 2
-        self.g = g
+        self.g = g      # g is the prior parameter for the HFM distribution
         self.device = device
         self.activation_fn = activation_fn() # Istanzia la funzione di attivazione
         self.num_hidden_layers = num_hidden_layers
