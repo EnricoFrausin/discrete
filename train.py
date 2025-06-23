@@ -1,7 +1,7 @@
 
 import torch
 import numpy as np
-from metadata import temperature, temp_min, ANNEAL_RATE, hard, _lambda
+from metadata import temperature, temp_min, ANNEAL_RATE, _lambda
 from utilities import get_empirical_latent_distribution, calculate_kl_divergence_with_HFM
 
 def train(model, _lambda, writer, train_loader, val_loader, optimizer, device, epochs, g=np.log(2), calculate_KL_HFM=False, save_tb_parameters=False):
@@ -15,10 +15,9 @@ def train(model, _lambda, writer, train_loader, val_loader, optimizer, device, e
 
         for batch_idx, (data, _) in enumerate(train_loader):
             global_batch_idx += 1
-            # Sposta i dati sul device corretto
             data = data.to(device)
             optimizer.zero_grad()
-            loss, KL, rec_loss = model(data, temp, _lambda, hard)
+            loss, KL, rec_loss = model(data, temp, _lambda, hard=False)
             loss.backward()
             train_loss += loss.item() * len(data)
             optimizer.step()
@@ -46,7 +45,7 @@ def train(model, _lambda, writer, train_loader, val_loader, optimizer, device, e
         with torch.no_grad():
             for batch_idx, (data, _) in enumerate(val_loader):
                 data = data.to(device)
-                loss, KL, rec_loss = model(data, temp, _lambda, hard=True)
+                loss, KL, rec_loss = model(data, temp, _lambda, hard=True) #hard setted to True for validation
                 val_loss_sum += loss.item() * len(data)
 
         writer.add_scalar('KL/Validation', KL, global_step=epoch)

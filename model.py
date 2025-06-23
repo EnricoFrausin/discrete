@@ -11,9 +11,9 @@ import math
 
 
 class VAE_priorCategorical(nn.Module):
-    def __init__(self, input_dim, latent_dim, categorical_dim, device,
+    def __init__(self, input_dim, latent_dim, device, categorical_dim = 2,
                  num_hidden_layers=1, decrease_rate=0.5,
-                 activation_fn=nn.ReLU, output_activation_encoder=None):
+                 activation_fn=nn.ReLU, output_activation_encoder=None, LayerNorm=True):
         """
         VAE con un numero flessibile di layer nascosti.
 
@@ -64,6 +64,8 @@ class VAE_priorCategorical(nn.Module):
             in_features = encoder_neuron_sizes[i]
             out_features = encoder_neuron_sizes[i+1]
             encoder_layers.append(nn.Linear(in_features, out_features))
+            if LayerNorm:
+                encoder_layers.append(nn.LayerNorm(out_features))
             # Applica l'attivazione a tutti i layer tranne l'ultimo (output dei logits),
             # a meno che non sia specificato diversamente con output_activation_encoder
             if i < len(encoder_neuron_sizes) - 2:
@@ -83,6 +85,8 @@ class VAE_priorCategorical(nn.Module):
             in_features = decoder_neuron_sizes[i]
             out_features = decoder_neuron_sizes[i+1]
             decoder_layers.append(nn.Linear(in_features, out_features))
+            if LayerNorm:
+                decoder_layers.append(nn.LayerNorm(out_features))
             if i < len(decoder_neuron_sizes) - 2: # Tutti tranne l'ultimo layer del decoder
                 decoder_layers.append(self.activation_fn)
             else: # Ultimo layer del decoder (output dell'immagine)
@@ -98,8 +102,7 @@ class VAE_priorCategorical(nn.Module):
         # z ha shape (batch_size, latent_dim * categorical_dim)
         return self.decoder_net(z)
 
-    # forward e sample_img richiederebbero gumbel_softmax
-    # Se li vuoi usare, assicurati che gumbel_softmax sia definita e accessibile
+
     def forward(self, data, temp, _lambda, hard=False): # 'hard' era nel tuo forward originale ma non usata
 
         # Flatten data se necessario
@@ -260,8 +263,8 @@ class VAE_priorHFM(nn.Module):
         # z ha shape (batch_size, latent_dim * categorical_dim)
         return self.decoder_net(z)
 
-    # forward e sample_img richiederebbero gumbel_softmax
-    # Se li vuoi usare, assicurati che gumbel_softmax sia definita e accessibile
+
+
     def forward(self, data, temp, _lambda, hard=False): # 'hard' era nel tuo forward originale ma non usata
 
         # Flatten data se necessario

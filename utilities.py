@@ -4,8 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 
-def sample_gumbel(shape, device, eps=1e-20):
-    # sample from a uniform distribution
+def sample_gumbel(shape, device, eps=1e-20): # for gumle_softmax_sample
     U = torch.rand(shape)
     return -torch.log(-torch.log(U.to(device) + eps) + eps)
 
@@ -300,7 +299,7 @@ def calculate_kl_divergence_with_HFM(empirical_probs, g=np.log(2), normalize_the
         if normalize_theoricalHFM:
             theorical_HFM_logits.append(get_HFM_prob(m_s, g, Z, True))
         else:
-            mean_H_s += p_emp * max(m_s-1, 0)
+            mean_H_s += p_emp * m_s
     
     if normalize_theoricalHFM:
         theorical_HFM_logits = torch.tensor(theorical_HFM_logits, dtype=torch.float32)
