@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+from collections import Counter
 
 def sample_gumbel(shape, device, eps=1e-20): # for gumle_softmax_sample
     U = torch.rand(shape)
@@ -167,7 +168,7 @@ def get_m_s(state_tuple, active_category_is_zero=True):
             return i + 1  # 1-indexed
     return 0
 
-from collections import Counter
+
 
 
 
@@ -288,11 +289,14 @@ def calculate_kl_divergence_with_HFM(empirical_probs, g=np.log(2), normalize_the
     latent_dim = len(next(iter(empirical_probs)))
     Z = calculate_Z_theoretical(latent_dim, g)
 
+
+    # sets the initialization for the KL calculations, in the two cases:
     if normalize_theoricalHFM:
         theorical_HFM_logits = []
         kl_divergence_func = torch.nn.KLDivLoss(reduction='sum', log_target=False)
     else:
         mean_H_s = 0
+
 
     for state, p_emp in empirical_probs.items():
         m_s = get_m_s(state)
@@ -315,6 +319,38 @@ def calculate_kl_divergence_with_HFM(empirical_probs, g=np.log(2), normalize_the
             return (kl_divergence, empirical_entropy)
         else:
             return kl_divergence
+        
+
+def calculate_kl_divergence_with_HFM_new(empirical_probs, g, return_additional_info=False):
+
+
+
+    empirical_probs_values = torch.tensor(list(empirical_probs.values()), dtype=torch.float32)
+    empirical_distribution = torch.distributions.Categorical(empirical_probs_values)
+    empirical_entropy = empirical_distribution.entropy()
+
+    latent_dim = len(next(iter(empirical_probs)))
+    log_Z = math.log(calculate_Z_theoretical(latent_dim, g))
+
+    mean_H_s = 0
+
+
+    for state, p_emp in empirical_probs.items():
+        m_s = get_m_s(state, active_category_is_zero=False)  # 1-indexed
+        mean_H_s += p_emp * m_s
+    
+    g_times_H_s = g * mean_H_s
+    #print(f"empirical_entropy={empirical_entropy}, g={g}, mean_H_s={mean_H_s}, math.log(Z)={math.log(Z)}")
+    kl_divergence = - empirical_entropy + g_times_H_s + log_Z
+
+
+    if not return_additional_info:
+        empirical_entropy = None
+        log_Z = None
+        g_times_H_s = None
+
+
+    return kl_divergence#, empirical_entropy, log_Z, g_times_H_s
         
     
 
