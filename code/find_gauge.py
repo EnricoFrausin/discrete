@@ -1,9 +1,15 @@
 import numpy as np
 from itertools import permutations
 from utilities import calculate_kl_divergence_with_HFM_new
+from utilities import get_empirical_latent_distribution
+from utilities import calculate_Z_theoretical, get_HFM_prob
+from utilities import get_m_s
+from scipy.optimize import minimize_scalar
+import os
+import matplotlib.pyplot as plt
 
 
-def flip_gauge_bits(empirical_probs):
+def flip_gauge_bits(empirical_probs): #for return_minimum_kl
     """
     Flip specific bits in all states based on the activated bits in the most frequent state.
     
@@ -34,9 +40,10 @@ def flip_gauge_bits(empirical_probs):
     return most_frequent_state_gauge_probs
 
 
+#___________________________________________OPTIONAL______________________________________________
 
 
-def get_feature_frequencies_sorted(state_probs):
+def get_feature_frequencies_sorted(state_probs): #For reorder_bit_states_frequency OPTIONAL
     """
     Given a dict {state_tuple: prob}, returns the indices of features sorted by their frequency (descending).
     """
@@ -55,7 +62,7 @@ def get_feature_frequencies_sorted(state_probs):
 
 
 
-def reorder_bit_states_by_frequency(state_probs):
+def reorder_bit_states_by_frequency(state_probs): # for return_goodgauged_empirical_probs, OPTIONAL
     """
     Reorders the bits in each state according to their frequency in the dataset.
     
@@ -79,7 +86,7 @@ def reorder_bit_states_by_frequency(state_probs):
     return reordered_probs
 
 
-def return_goodgauged_empirical_probs(empirical_probs):
+def return_goodgauged_empirical_probs(empirical_probs): #OPTIONAL
     """
     Main function to find the gauge transformation for the given empirical probabilities.
     
@@ -95,8 +102,7 @@ def return_goodgauged_empirical_probs(empirical_probs):
     return reordered_probs
 
 
-# At this point we have the functions to start the gauge tranformation procedure.
-
+#_____________________________________________________________________________________________________
 
 
 # def find_optimal_g_parameter(reordered_probs, g_bounds=(0.1, 5.0)):
@@ -143,15 +149,15 @@ def return_goodgauged_empirical_probs(empirical_probs):
 
 
 
-
-
-def find_minimum_kl_brute_force(good_guaged_probs, g=np.log(2), return_additional_info=False):
+#To be used to find the best permutation of the states that minimizes the KL divergence with the HFM model.
+#The same permutation should be valid for all g values, therefore it is not necessary to recalculate the gauge for different g values. See ```print_minimum_kl_in_g_range``` below.
+def find_minimum_kl_brute_force(good_gauged_probs, g=np.log(2), return_additional_info=False, print_permutation_steps=float("inf")): # for return_minimum_kl
     """
     Brute-force search for the permutation of state columns that minimizes the KL divergence
     between the permuted empirical distribution and the HFM model with parameter g.
 
     Args:
-        good_guaged_probs (dict): Dictionary mapping state tuples to probabilities.
+        good_gauged_probs (dict): Dictionary mapping state tuples to probabilities.
         g (float, optional): HFM model parameter. Defaults to np.log(2).
         return_additional_info (bool, optional): If True, returns the best permutation and state dict.
 
@@ -160,10 +166,11 @@ def find_minimum_kl_brute_force(good_guaged_probs, g=np.log(2), return_additiona
         best_permutation (tuple or None): The permutation that yields the minimum KL (if requested).
         best_state_dict (dict or None): The permuted state dictionary (if requested).
     """
-    states_matrix = np.array(list(good_guaged_probs.keys()))
+    states_matrix = np.array(list(good_gauged_probs.keys()))
     state_len = states_matrix.shape[1]
     permutations_list = list(permutations(range(state_len)))
 
+    total_permutations = len(permutations_list)
  
     minimum_kl = float('inf')
     best_permutation = None
@@ -177,7 +184,7 @@ def find_minimum_kl_brute_force(good_guaged_probs, g=np.log(2), return_additiona
         states_matrix_copy = np.empty(states_matrix.shape)
         states_matrix_copy[:, :] = states_matrix[:, list(perm)]
 
-        permutated_state_dict = dict((tuple(row), prob) for row, prob in zip(states_matrix_copy, good_guaged_probs.values()))
+        permutated_state_dict = dict((tuple(row), prob) for row, prob in zip(states_matrix_copy, good_gauged_probs.values()))
 
         temporary_kl = calculate_kl_divergence_with_HFM_new(permutated_state_dict, g=g)
         if temporary_kl < minimum_kl:
@@ -186,15 +193,393 @@ def find_minimum_kl_brute_force(good_guaged_probs, g=np.log(2), return_additiona
             best_state_dict = permutated_state_dict
 
 
-        if i % 10000 == 0:
+        if i % print_permutation_steps == 0:
             print(f"Processed {i} permutations, current minimum KL: {minimum_kl}, best permutation: {best_permutation}")
-
-    
-    if not return_additional_info:
-        best_permutation = None
-        best_state_dict = None
+            
+    print(f"Total permutations processed: {total_permutations}, Minimum KL: {minimum_kl}, Best permutation: {best_permutation}")    
 
     return (minimum_kl, best_permutation, best_state_dict) if return_additional_info else minimum_kl
 
 
 
+
+
+
+#Function to find the minimum KL divergence for a range of g values. Used to determine wether
+# the gauge is the same for different g values.
+def print_minimum_kl_in_g_range(my_model, train_loader, device):
+    """
+    Calculates and returns the minimum Kullback-Leibler (KL) divergence for a given model and dataset.
+
+    This function computes the empirical latent distribution of the provided model over the training data,
+    applies a gauge transformation to obtain a set of "good-gauged" empirical probabilities, and then
+    finds the minimum KL divergence among these using a brute-force search.
+
+    Args:
+        my_model: The model whose latent distribution is to be analyzed.
+        train_loader: DataLoader providing the training data.
+        device: The device (CPU or GPU) on which computations are performed.
+        g (float, optional): The logarithm of the base for the KL divergence calculation. Defaults to np.log(2).
+
+    Returns:
+        float: The minimum KL divergence found among the good-gauged empirical probabilities.
+
+    Prints:
+        The minimum KL divergence value.
+    """
+    empirical_probs, total_samples = get_empirical_latent_distribution(my_model, train_loader, device=device)
+    good_gauged_dict = flip_gauge_bits(empirical_probs)
+    for g in np.arange(0.1, 2, 0.2):
+        minimum_kl = find_minimum_kl_brute_force(good_gauged_dict, g=g)
+        print(f"Minimum KL divergence for g={g}: {minimum_kl}")
+
+    return
+
+
+
+
+
+# Example usage:
+# my_model = VAE_priorCategorical(input_dim=input_dim, categorical_dim=2, latent_dim=8, decrease_rate=0.5, device=device, num_hidden_layers=1, LayerNorm=True).to(device)
+# my_model.load_state_dict(torch.load('/Users/enricofrausin/Programmazione/PythonProjects/Fisica/Architetture/VAE/discrete/models_parameters/priorCategorical/MNIST/ld8_glog2_ep15_lmb01_dr05_gKLlog2_LN_1hl_0.pth', map_location=device))
+# print("Calculating KL divergences for model with 1 hidden layer...")
+# layer_dicts.append(return_minimum_kl_in_g_range(my_model, train_loader, device, g_values))
+# print("---------------\n")
+
+
+def return_minimum_kl_in_g_range(my_model, train_loader, device, g_values=np.arange(0.1, 2, 0.2)):
+    """
+    Computes the KL divergence between the empirical latent distribution of a model and the HFM distribution
+    for a range of gauge parameter values `g`. The function identifies the best gauge transformation that minimizes
+    the KL divergence for the first value in `g_values` using a brute force approach, then evaluates the KL divergence for all specified `g` values
+    using the optimal gauge found.
+
+    Args:
+        my_model: The trained model whose latent distribution is to be analyzed.
+        train_loader: DataLoader providing the training data for extracting the latent distribution.
+        device: The device (CPU or GPU) on which computations are performed.
+        g_values (array-like, optional): Sequence of gauge parameter values to evaluate. Defaults to np.arange(0.1, 2, 0.2).
+
+    Returns:
+        dict: A dictionary mapping each value in `g_values` to the corresponding KL divergence.
+    """
+
+    print("Obtaining the internal latent distribution of the model...")
+    empirical_probs, total_samples = get_empirical_latent_distribution(my_model, train_loader, device=device)
+    good_gauged_dict = flip_gauge_bits(empirical_probs)
+
+    print("Evaluating the best gauge of the latent states...")
+    min_kl_values = {}
+    minimum_kl, best_permutation, gauged_states = find_minimum_kl_brute_force(good_gauged_dict, g=g_values[0], return_additional_info=True)
+    min_kl_values[g_values[0]] = minimum_kl
+
+    print("Calculating the KL divergence for different g values...")
+    for g in g_values:
+        temporary_kl = calculate_kl_divergence_with_HFM_new(gauged_states, g=g)
+        min_kl_values[g] = temporary_kl
+
+    return min_kl_values
+
+
+
+
+ # TO CHECK, THIS METHOD TO FIND THE OPTIMAL g DOES NOT WORK PROPERLY
+def find_optimal_g_parameter(gauged_states, g_bounds=(0.1, 5.0)):
+    """
+    Finds the optimal g parameter that minimizes the expected m_s value
+    according to the theoretical HFM distribution using scipy.optimize.
+    
+    Args:
+        reordered_probs (dict): Dictionary mapping state tuples to their empirical probabilities
+                              (typically after gauge transformation and reordering).
+        g_bounds (tuple): Bounds for g (min, max) for the optimization.
+        
+    Returns:
+        float: The optimal g value that minimizes the expected m_s.
+        float: The minimum expected m_s value.
+    """
+    latent_dim = len(next(iter(gauged_states)))
+
+    # Precompute m_s values for all states
+    m_s_values = {state: get_m_s(state, active_category_is_zero=False) for state in gauged_states.keys()}
+
+
+    def objective_function(g):
+        Z = calculate_Z_theoretical(latent_dim, g)
+        expected_ms = 0.0
+        
+        # Calculate the theoretical probability for each state
+        for state, empirical_prob in gauged_states.items():
+
+            m_s = m_s_values[state]  # Use precomputed m_s
+
+            hfm_prob = get_HFM_prob(m_s, g, Z, logits=False)
+
+            expected_ms += m_s * empirical_prob * hfm_prob
+
+            return expected_ms
+
+    # Use scipy.optimize to minimize the objective function
+    result = minimize_scalar(objective_function, bounds=g_bounds, method='bounded')
+
+    return result.x, result.fun  # Optimal g and the corresponding minimum expected m_s
+
+
+
+#–––––––––––––––––––––––––––––––––––––––––PLOTS––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+
+
+# DEPRECATED
+def save_individual_plots(save_dir, g_range):           #ATTENTION: This function works properly if the 
+                                                        #variables are defined in the global scope as kl_divergences_g_*.
+    """
+    Create and save individual plots for each g value.
+    
+    Args:
+        save_dir (str): Directory path where plots will be saved
+        g_range (np.array): Array of g values to plot
+    """
+    # Create directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Get the default color cycle
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    
+    num_layers = [1, 2, 3, 4, 5, 6]
+    
+    # Create individual plots for each g value
+    for i, g in enumerate(g_range):
+        var_name = f"kl_divergences_{str(round(g, 2)).replace('.', '')}"
+        
+        if var_name in globals():
+            plt.figure(figsize=(8, 6))
+            values = globals()[var_name]
+            # Convert tensors to floats for plotting
+            values = [v.item() if hasattr(v, "item") else v for v in values]
+            
+            plt.plot(num_layers, values, color=colors[i], linewidth=2, marker='o')
+            plt.xlabel('Number of layers for each VAE')
+            plt.ylabel('KL with HFM')
+            plt.title(f'g of HFM = {g:.1f}')
+            plt.grid(True, alpha=0.3)
+            
+            # Save the figure
+            filename = f"kl_divergence_g_{g:.1f}.png"
+            filepath = os.path.join(save_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            plt.close()  # Close the figure to free memory
+            
+            print(f"Saved: {filepath}")
+    
+    print(f"All plots saved to: {save_dir}")
+
+# Example usage:
+# save_individual_plots("/Users/enricofrausin/Programmazione/PythonProjects/Fisica/Immagini/kl_divergence_priorCategorical_MNIST/lmb01", np.arange(0.1, 2, 0.2))
+
+
+
+# DEPRECATED
+def plot_kl_multiline(g_range, var_name_prefix="kl_divergences", title="KL Divergence vs Number of Layers", figsize=(10, 6)):
+    """
+    Create a multi-line plot showing KL divergences for different g values.
+    
+    Args:
+        g_range (np.array): Array of g values to plot
+        var_name_prefix (str): Prefix for variable names in globals()
+        title (str): Title for the plot
+        figsize (tuple): Figure size (width, height)
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    num_layers = [1, 2, 3, 4, 5, 6]
+    
+    for i, g in enumerate(g_range):
+        var_name = f"{var_name_prefix}_{str(round(g, 2)).replace('.', '')}"
+        
+        if var_name in globals():
+            values = globals()[var_name]
+            # Convert tensors to floats for plotting
+            values = [v.item() if hasattr(v, "item") else v for v in values]
+            ax.plot(num_layers, values, label=f'g = {g:.2f}')
+    
+    ax.set_xlabel('Number of layers for each VAE')
+    ax.set_ylabel('KL with HFM')
+    ax.set_title(title)
+    ax.legend(loc='upper left')
+    plt.show()
+
+# Example usage:
+# plot_kl_multiline(np.arange(0.1, 2, 0.2))
+# plot_kl_multiline(np.arange(0.1, 2, 0.2), var_name_prefix="kl_divergences_lmb01", title="Lambda = 0.1")
+
+
+
+# Example usage:
+
+# plot_kl_multiline_from_dicts(layer_dicts, g_values, title="KL Divergence Analysis - MNIST")
+
+def plot_kl_multiline_from_dicts(layer_dicts, g_range, title="KL Divergence vs Number of Layers", figsize=(10, 6)):
+    """
+    Create a multi-line plot showing KL divergences for different g values using layer dictionaries.
+    
+    Args:
+        layer_dicts (list): List of dictionaries, each containing KL divergences for different layers
+                           Format: [kl_divergences_1_layers, kl_divergences_2_layers, ...]
+        g_range (np.array): Array of g values to plot
+        title (str): Title for the plot
+        figsize (tuple): Figure size (width, height)
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    num_layers = list(range(1, len(layer_dicts) + 1))
+    
+    # Get the default color cycle
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    
+    for i, g in enumerate(g_range):
+        values = []
+        for layer_dict in layer_dicts:
+            if g in layer_dict:
+                val = layer_dict[g]
+                # Convert tensor to float if needed
+                if hasattr(val, "item"):
+                    val = val.item()
+                values.append(val)
+            else:
+                print(f"Warning: g={g} not found in one of the layer dictionaries")
+                continue
+        
+        if len(values) == len(num_layers):
+            ax.plot(num_layers, values, label=f'g = {g:.2f}', color=colors[i % len(colors)], 
+                   linewidth=2, marker='o')
+    
+    ax.set_xlabel('Number of layers for each VAE')
+    ax.set_ylabel('KL with HFM')
+    ax.set_title(title)
+    ax.legend(loc='upper left')
+    ax.grid(True, alpha=0.3)
+    plt.show()
+
+
+#Example usage:
+
+# save_individual_plots_from_dicts(
+#     layer_dicts, 
+#     g_values, 
+#     "/Users/enricofrausin/Programmazione/PythonProjects/Fisica/Immagini//Users/enricofrausin/Programmazione/PythonProjects/Fisica/Immagini/kl_divergence_priorCategorical_MNIST/",
+#     title_prefix="MNIST Analysis"
+# )
+
+def save_individual_plots_from_dicts(layer_dicts, g_range, save_dir, title_prefix=""):
+    """
+    Create and save individual plots for each g value using layer dictionaries.
+    
+    Args:
+        layer_dicts (list): List of dictionaries, each containing KL divergences for different layers
+        g_range (np.array): Array of g values to plot
+        save_dir (str): Directory path where plots will be saved
+        title_prefix (str): Prefix for plot titles
+    """
+    # Create directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Get the default color cycle
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    
+    num_layers = list(range(1, len(layer_dicts) + 1))
+    
+    # Create individual plots for each g value
+    for i, g in enumerate(g_range):
+        values = []
+        for layer_dict in layer_dicts:
+            if g in layer_dict:
+                val = layer_dict[g]
+                # Convert tensor to float if needed
+                if hasattr(val, "item"):
+                    val = val.item()
+                values.append(val)
+            else:
+                print(f"Warning: g={g} not found in one of the layer dictionaries")
+                break
+        
+        if len(values) == len(num_layers):
+            plt.figure(figsize=(8, 6))
+            plt.plot(num_layers, values, color=colors[i % len(colors)], 
+                    linewidth=2, marker='o')
+            plt.xlabel('Number of layers for each VAE')
+            plt.ylabel('KL with HFM')
+            
+            title = f'g of HFM = {g:.1f}'
+            if title_prefix:
+                title = f'{title_prefix} - {title}'
+            plt.title(title)
+            plt.grid(True, alpha=0.3)
+            
+            # Save the figure
+            filename = f"kl_divergence_g_{g:.1f}.png"
+            filepath = os.path.join(save_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            plt.close()  # Close the figure to free memory
+            
+            print(f"Saved: {filepath}")
+    
+    print(f"All plots saved to: {save_dir}")
+
+
+
+# Example usage:
+
+# create_combined_multiline_plot(
+#     layer_dicts, 
+#     g_values,
+#     save_path="/Users/enricofrausin/Programmazione/PythonProjects/Fisica/Immagini//Users/enricofrausin/Programmazione/PythonProjects/Fisica/Immagini/kl_divergence_priorCategorical_MNIST/kl_divergences_combined_depth_analysis.png",
+#     title="KL Divergence vs Number of Layers - MNIST Dataset"
+# )
+
+def create_combined_multiline_plot(layer_dicts, g_range, save_path=None, title="KL Divergence vs Number of Layers", figsize=(12, 8)):
+    """
+    Create a combined multi-line plot and optionally save it.
+    
+    Args:
+        layer_dicts (list): List of dictionaries, each containing KL divergences for different layers
+        g_range (np.array): Array of g values to plot
+        save_path (str, optional): Path to save the combined plot
+        title (str): Title for the plot
+        figsize (tuple): Figure size (width, height)
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    num_layers = list(range(1, len(layer_dicts) + 1))
+    
+    # Get the default color cycle
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    
+    for i, g in enumerate(g_range):
+        values = []
+        for layer_dict in layer_dicts:
+            if g in layer_dict:
+                val = layer_dict[g]
+                # Convert tensor to float if needed
+                if hasattr(val, "item"):
+                    val = val.item()
+                values.append(val)
+            else:
+                print(f"Warning: g={g} not found in one of the layer dictionaries")
+                continue
+        
+        if len(values) == len(num_layers):
+            ax.plot(num_layers, values, label=f'g = {g:.2f}', color=colors[i % len(colors)], 
+                   linewidth=2, marker='o')
+    
+    ax.set_xlabel('Number of layers for each VAE')
+    ax.set_ylabel('KL with HFM')
+    ax.set_title(title)
+    ax.legend(loc='upper left')
+    ax.grid(True, alpha=0.3)
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Combined plot saved to: {save_path}")
+    
+    plt.show()
