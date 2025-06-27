@@ -583,3 +583,142 @@ def create_combined_multiline_plot(layer_dicts, g_range, save_path=None, title="
         print(f"Combined plot saved to: {save_path}")
     
     plt.show()
+
+
+#––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+
+
+
+def compare_datasets_by_layer(layer_dicts_list1, layer_dicts_list2, layer_dicts_list3, 
+                              g_values, layer_index, 
+                              dataset_names=['EMNIST', '2MNIST', 'MNIST'],
+                              save_path=None, title_suffix=""):
+    """
+    Compare KL divergences across three datasets for a specific layer index.
+    
+    Parameters:
+    - layer_dicts_list1, layer_dicts_list2, layer_dicts_list3: Lists of dictionaries containing KL values
+    - g_values: Array of g values
+    - layer_index: Index of the layer to compare (0-based)
+    - dataset_names: Names of the datasets for the legend
+    - save_path: Path to save the plot (optional)
+    - title_suffix: Additional text for the plot title
+    """
+    plt.figure(figsize=(10, 6))
+    
+    # Check if layer_index is valid for all lists
+    max_layers = min(len(layer_dicts_list1), len(layer_dicts_list2), len(layer_dicts_list3))
+    if layer_index >= max_layers:
+        print(f"Layer index {layer_index} is out of range. Maximum available: {max_layers - 1}")
+        return
+    
+    # Extract KL values for each dataset
+    kl_values_1 = [layer_dicts_list1[layer_index][g] for g in g_values]
+    kl_values_2 = [layer_dicts_list2[layer_index][g] for g in g_values]
+    kl_values_3 = [layer_dicts_list3[layer_index][g] for g in g_values]
+    
+    # Plot the three datasets
+    plt.plot(g_values, kl_values_1, 'o-', label=dataset_names[0], linewidth=2, markersize=6)
+    plt.plot(g_values, kl_values_2, 's-', label=dataset_names[1], linewidth=2, markersize=6)
+    plt.plot(g_values, kl_values_3, '^-', label=dataset_names[2], linewidth=2, markersize=6)
+    
+    plt.xlabel('g values', fontsize=12)
+    plt.ylabel('KL Divergence', fontsize=12)
+    plt.title(f'KL Divergence Comparison - Layer {layer_index + 1} {title_suffix}', fontsize=14)
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Plot saved to: {save_path}")
+    
+    plt.show()
+
+def compare_all_layers(layer_dicts_list1, layer_dicts_list2, layer_dicts_list3, 
+                       g_values, dataset_names=['EMNIST', '2MNIST', 'MNIST'],
+                       save_dir=None):
+    """
+    Compare KL divergences across three datasets for all available layers.
+    
+    Parameters:
+    - layer_dicts_list1, layer_dicts_list2, layer_dicts_list3: Lists of dictionaries containing KL values
+    - g_values: Array of g values
+    - dataset_names: Names of the datasets for the legend
+    - save_dir: Directory to save the plots (optional)
+    """
+    max_layers = min(len(layer_dicts_list1), len(layer_dicts_list2), len(layer_dicts_list3))
+    
+    for layer_idx in range(max_layers):
+        save_path = None
+        if save_dir:
+            save_path = f"{save_dir}/comparison_layer_{layer_idx + 1}.png"
+        
+        compare_datasets_by_layer(
+            layer_dicts_list1, layer_dicts_list2, layer_dicts_list3,
+            g_values, layer_idx, dataset_names, save_path
+        )
+
+
+
+
+def create_combined_comparison_plot(layer_dicts_list1, layer_dicts_list2, layer_dicts_list3,
+                                   g_values, dataset_names=['EMNIST', '2MNIST', 'MNIST'],
+                                   save_path=None):
+    """
+    Create a combined subplot showing all layer comparisons in one figure.
+    
+    Parameters:
+    - layer_dicts_list1, layer_dicts_list2, layer_dicts_list3: Lists of dictionaries containing KL values
+    - g_values: Array of g values
+    - dataset_names: Names of the datasets
+    - save_path: Path to save the combined plot
+    """
+    max_layers = min(len(layer_dicts_list1), len(layer_dicts_list2), len(layer_dicts_list3))
+    
+    # Calculate subplot layout
+    cols = 3
+    rows = (max_layers + cols - 1) // cols
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(15, 5 * rows))
+    if rows == 1:
+        axes = axes.reshape(1, -1)
+    
+    for layer_idx in range(max_layers):
+        row = layer_idx // cols
+        col = layer_idx % cols
+        ax = axes[row, col]
+        
+        # Extract KL values for each dataset
+        kl_values_1 = [layer_dicts_list1[layer_idx][g] for g in g_values]
+        kl_values_2 = [layer_dicts_list2[layer_idx][g] for g in g_values]
+        kl_values_3 = [layer_dicts_list3[layer_idx][g] for g in g_values]
+        
+        # Plot the three datasets
+        ax.plot(g_values, kl_values_1, 'o-', label=dataset_names[0], linewidth=2, markersize=4)
+        ax.plot(g_values, kl_values_2, 's-', label=dataset_names[1], linewidth=2, markersize=4)
+        ax.plot(g_values, kl_values_3, '^-', label=dataset_names[2], linewidth=2, markersize=4)
+        
+        ax.set_xlabel('g values')
+        ax.set_ylabel('KL Divergence')
+        ax.set_title(f'Layer {layer_idx + 1}')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    # Hide empty subplots
+    for layer_idx in range(max_layers, rows * cols):
+        row = layer_idx // cols
+        col = layer_idx % cols
+        axes[row, col].set_visible(False)
+    
+    plt.suptitle('KL Divergence Comparison Across Datasets', fontsize=16)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Combined plot saved to: {save_path}")
+    
+    plt.show()
+
+
