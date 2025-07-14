@@ -177,7 +177,7 @@ def get_HFM_prob(m_s: float, g: float, Z: float, logits: True) -> float:
     Calulates the HFM theorical probability for a state, given m_s, g, and Z.
     If logits=True (default) it returns the log probabilities.
     """
-    H_s = max(m_s - 1, 0)
+    H_s = m_s-1 #max(m_s - 1, 0)
     if logits:
         return -g * H_s - np.log(Z)
     return np.exp(-g * H_s)/Z
@@ -235,6 +235,34 @@ def get_empirical_latent_distribution(model, dataloader, device):
     empirical_probs = {state: count / total_samples for state, count in state_counts.items()}
     return empirical_probs, total_samples
 
+
+def plot_bit_frequencies(empirical_probs):
+    """
+    Plots the frequency of each bit being active (weighted by empirical probabilities).
+    To be applied after the gauge has been found.
+
+    Args:
+        empirical_probs (dict): Dictionary mapping state tuples to their empirical probabilities.
+    """
+    if not empirical_probs:
+        print("Empty empirical_probs dictionary.")
+        return
+
+    latent_dim = len(next(iter(empirical_probs)))
+    bit_freqs = np.zeros(latent_dim)
+
+    for state, prob in empirical_probs.items():
+        bit_freqs += np.array(state) * prob
+
+    plt.figure(figsize=(8, 4))
+    plt.bar(range(latent_dim), bit_freqs)
+    plt.xlabel("Bit index")
+    plt.ylabel("Average value (frequency of being '1')")
+    plt.title("Empirical Bit Frequencies (Weighted by Probability)")
+    plt.xticks(range(latent_dim))
+    plt.ylim(0, 1)
+    plt.grid(axis='y', alpha=0.3)
+    plt.show()
 
 
 

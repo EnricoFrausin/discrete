@@ -116,14 +116,11 @@ class VAE_priorCategorical(nn.Module):
         logits_z = logits_z_flat.view(-1, self.latent_dim, self.categorical_dim) # (batch_size, latent_dim, categorical_dim)
 
         probs_z = F.softmax(logits_z, dim=-1) # Probabilità per ogni categoria, per ogni var latente
-        posterior_distrib = torch.distributions.Categorical(probs=probs_z)
 
         # Prior uniforme
         probs_prior_val = 1.0 / self.categorical_dim
-        # Creare un tensore di prior_probs con la stessa forma di logits_z
-        # è importante per il broadcasting corretto nel calcolo di KL
         prior_probs_tensor = torch.full_like(logits_z, probs_prior_val)
-        prior_distrib = torch.distributions.Categorical(probs=prior_probs_tensor)
+
 
 
         # Campionamento Gumbel-Softmax
@@ -278,7 +275,6 @@ class VAE_priorHFM(nn.Module):
         logits_z = logits_z_flat.view(-1, self.latent_dim, self.categorical_dim) # (batch_size, latent_dim, categorical_dim)
 
         probs_z = F.softmax(logits_z, dim=-1) # Probabilità per ogni categoria, per ogni var latente
-        posterior_distrib = torch.distributions.Categorical(probs=probs_z)
 
 
         # Prior con distribuzione HFM

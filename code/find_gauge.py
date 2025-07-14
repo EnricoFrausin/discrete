@@ -1,12 +1,14 @@
 import numpy as np
-from itertools import permutations
+from itertools import permutations, combinations
 from utilities import calculate_kl_divergence_with_HFM_new
 from utilities import get_empirical_latent_distribution
 from utilities import calculate_Z_theoretical, get_HFM_prob
 from utilities import get_m_s
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize_scalar, basinhopping
 import os
 import matplotlib.pyplot as plt
+import random
+import math
 
 
 def flip_gauge_bits(empirical_probs): #for return_minimum_kl
@@ -205,9 +207,82 @@ def find_minimum_kl_brute_force(good_gauged_probs, g=np.log(2), return_additiona
 
 
 
+def find_minimum_kl_simulated_annealing(good_gauged_probs, g=np.log(2), return_additional_info=False, 
+                                       initial_temp=10.0, cooling_rate=0.95, n_iterations=1000, 
+                                       verbose=False):
+    """
+    Uses simulated annealing to find a permutation of state columns that minimizes 
+    the KL divergence with the HFM model.
+    """
+    states_matrix = np.array(list(good_gauged_probs.keys()))
+    state_len = states_matrix.shape[1]
+    
+    # Start with identity permutation
+    current_perm = list(range(state_len))
+    
+    # Create initial state dictionary
+    states_matrix_copy = np.empty(states_matrix.shape)
+    states_matrix_copy[:, :] = states_matrix[:, current_perm]
+    current_state_dict = dict((tuple(row), prob) for row, prob in zip(states_matrix_copy, good_gauged_probs.values()))
+    
+    # Calculate initial KL divergence
+    current_kl = calculate_kl_divergence_with_HFM_new(current_state_dict, g=g)
+    
+    # Keep track of best solution
+    best_perm = current_perm.copy()
+    best_kl = current_kl
+    best_state_dict = current_state_dict.copy()
+    
+    # Temperature schedule
+    temp = initial_temp
+    
+    # Main simulated annealing loop
+    for i in range(n_iterations):
+        # Use combinations from itertools to select positions to swap
+        swap_indices = random.choice(list(combinations(range(state_len), 2)))
+        
+        # Create a new candidate permutation by swapping positions
+        candidate_perm = current_perm.copy()
+        candidate_perm[swap_indices[0]], candidate_perm[swap_indices[1]] = candidate_perm[swap_indices[1]], candidate_perm[swap_indices[0]]
+        
+        # Calculate KL for the candidate permutation
+        states_matrix_copy[:, :] = states_matrix[:, candidate_perm]
+        candidate_state_dict = dict((tuple(row), prob) for row, prob in zip(states_matrix_copy, good_gauged_probs.values()))
+        candidate_kl = calculate_kl_divergence_with_HFM_new(candidate_state_dict, g=g)
+        
+        # Metropolis acceptance criterion
+        delta_kl = candidate_kl - current_kl
+        if delta_kl < 0 or random.random() < math.exp(-delta_kl / temp):
+            current_perm = candidate_perm
+            current_kl = candidate_kl
+            current_state_dict = candidate_state_dict
+            
+            # Update best solution if applicable
+            if current_kl < best_kl:
+                best_perm = current_perm.copy()
+                best_kl = current_kl
+                best_state_dict = current_state_dict.copy()
+                
+                if verbose:
+                    print(f"Iteration {i+1}, New best KL: {best_kl:.6f}, Temperature: {temp:.6f}")
+        
+        # Reduce temperature
+        temp *= cooling_rate
+        
+        # Periodic progress report
+        if verbose and (i + 1) % 100 == 0:
+            print(f"Iteration {i+1}, Current KL: {current_kl:.6f}, Best KL: {best_kl:.6f}")
+    
+    if verbose:
+        print(f"Final KL: {best_kl:.6f}, Best permutation: {tuple(best_perm)}")
+    
+    return (best_kl, tuple(best_perm), best_state_dict) if return_additional_info else best_kl
+
+
+
 #Function to find the minimum KL divergence for a range of g values. Used to determine wether
 # the gauge is the same for different g values.
-def print_minimum_kl_in_g_range(my_model, train_loader, device):
+def print_minimum_kl_in_g_range(my_model, train_loader, device, brute_force = False):
     """
     Calculates and returns the minimum Kullback-Leibler (KL) divergence for a given model and dataset.
 
@@ -230,7 +305,10 @@ def print_minimum_kl_in_g_range(my_model, train_loader, device):
     empirical_probs, total_samples = get_empirical_latent_distribution(my_model, train_loader, device=device)
     good_gauged_dict = flip_gauge_bits(empirical_probs)
     for g in np.arange(0.1, 2, 0.2):
-        minimum_kl = find_minimum_kl_brute_force(good_gauged_dict, g=g)
+        if brute_force:
+            minimum_kl = find_minimum_kl_brute_force(good_gauged_dict, g=g)
+        else:
+            minimum_kl = find_minimum_kl_simulated_annealing(good_gauged_dict, g=g)
         print(f"Minimum KL divergence for g={g}: {minimum_kl}")
 
     return
@@ -310,17 +388,15 @@ def find_optimal_g_parameter(gauged_states, g_bounds=(0.1, 5.0)):
         
         # Calculate the theoretical probability for each state
         for state, empirical_prob in gauged_states.items():
-
             m_s = m_s_values[state]  # Use precomputed m_s
-
             hfm_prob = get_HFM_prob(m_s, g, Z, logits=False)
+            expected_ms += m_s * hfm_prob *empirical_prob
 
-            expected_ms += m_s * empirical_prob * hfm_prob
-
-            return expected_ms
+        return expected_ms
 
     # Use scipy.optimize to minimize the objective function
-    result = minimize_scalar(objective_function, bounds=g_bounds, method='bounded')
+    #result = minimize_scalar(objective_function, bounds=g_bounds, method='bounded')
+    result = basinhopping(objective_function, x0=0.6)
 
     return result.x, result.fun  # Optimal g and the corresponding minimum expected m_s
 
@@ -722,3 +798,55 @@ def create_combined_comparison_plot(layer_dicts_list1, layer_dicts_list2, layer_
     plt.show()
 
 
+# ––––––––––––––––––––––––––––––––––––––OPTIMAL G PARAMETER PLOTS–––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+
+
+def plot_expected_ms_vs_g(gauged_states, g_range=np.linspace(0.1, 5.0, 50)):
+    """
+    Plots the expected m_s value for a range of g values.
+
+    Args:
+        gauged_states (dict): Dictionary mapping state tuples to their empirical probabilities.
+        g_range (array-like): Sequence of g values to evaluate.
+    """
+    latent_dim = len(next(iter(gauged_states)))
+    m_s_values = {state: get_m_s(state, active_category_is_zero=False) for state in gauged_states.keys()}
+    expected_ms_list = []
+
+    for g in g_range:
+        Z = calculate_Z_theoretical(latent_dim, g)
+        expected_ms = 0.0
+        for state, empirical_prob in gauged_states.items():
+            m_s = m_s_values[state]
+            hfm_prob = get_HFM_prob(m_s, g, Z, logits=False)
+            expected_ms += m_s * hfm_prob * empirical_prob
+           # expected_ms += m_s * empirical_prob  # Add the empirical contribution
+        expected_ms_list.append(expected_ms)
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(g_range, expected_ms_list, marker='o')
+    plt.xlabel('g')
+    plt.ylabel('Expected m_s')
+    plt.title('Expected m_s vs g')
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+
+
+def plot_expected_kl_vs_g(gauged_states, g_range=np.linspace(0.1, 5.0, 50)):
+
+
+    expected_kl_list = []
+
+    for g in g_range:
+        expected_kl_list.append(calculate_kl_divergence_with_HFM_new(gauged_states, g))
+
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(g_range, expected_kl_list, marker='o')
+    plt.xlabel('g')
+    plt.ylabel('Expected KL Divergence')
+    plt.title('Expected KL Divergence vs g')
+    plt.grid(True, alpha=0.3)
+    plt.show()
