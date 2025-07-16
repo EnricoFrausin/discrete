@@ -325,7 +325,7 @@ def print_minimum_kl_in_g_range(my_model, train_loader, device, brute_force = Fa
 # print("---------------\n")
 
 
-def return_minimum_kl_in_g_range(my_model, train_loader, device, g_values=np.arange(0.1, 2, 0.2)):
+def return_minimum_kl_in_g_range(my_model, train_loader, device, g_values=np.arange(0.1, 2, 0.2), brute_force=False):
     """
     Computes the KL divergence between the empirical latent distribution of a model and the HFM distribution
     for a range of gauge parameter values `g`. The function identifies the best gauge transformation that minimizes
@@ -348,8 +348,11 @@ def return_minimum_kl_in_g_range(my_model, train_loader, device, g_values=np.ara
 
     print("Evaluating the best gauge of the latent states...")
     min_kl_values = {}
-    minimum_kl, best_permutation, gauged_states = find_minimum_kl_brute_force(good_gauged_dict, g=g_values[0], return_additional_info=True)
-    min_kl_values[g_values[0]] = minimum_kl
+    if brute_force:
+        minimum_kl, best_permutation, gauged_states = find_minimum_kl_brute_force(good_gauged_dict, g=np.log(2), return_additional_info=True)
+    else:
+        minimum_kl, best_permutation, gauged_states = find_minimum_kl_simulated_annealing(good_gauged_dict, g=np.log(2), return_additional_info=True)
+
 
     print("Calculating the KL divergence for different g values...")
     for g in g_values:
@@ -772,9 +775,12 @@ def create_combined_comparison_plot(layer_dicts_list1, layer_dicts_list2, layer_
         kl_values_3 = [layer_dicts_list3[layer_idx][g] for g in g_values]
         
         # Plot the three datasets
-        ax.plot(g_values, kl_values_1, 'o-', label=dataset_names[0], linewidth=2, markersize=4)
-        ax.plot(g_values, kl_values_2, 's-', label=dataset_names[1], linewidth=2, markersize=4)
-        ax.plot(g_values, kl_values_3, '^-', label=dataset_names[2], linewidth=2, markersize=4)
+        # ax.plot(g_values, kl_values_1, 'o-', label=dataset_names[0], linewidth=2, markersize=4)
+        # ax.plot(g_values, kl_values_2, 's-', label=dataset_names[1], linewidth=2, markersize=4)
+        # ax.plot(g_values, kl_values_3, '^-', label=dataset_names[2], linewidth=2, markersize=4)
+        ax.plot(g_values, kl_values_1, label=dataset_names[0], linewidth=2)
+        ax.plot(g_values, kl_values_2, label=dataset_names[1], linewidth=2)
+        ax.plot(g_values, kl_values_3, label=dataset_names[2], linewidth=2)
         
         ax.set_xlabel('g values')
         ax.set_ylabel('KL Divergence')
