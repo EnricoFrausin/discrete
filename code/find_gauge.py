@@ -827,7 +827,8 @@ def plot_expected_ms_vs_g(gauged_states, g_range=np.linspace(0.1, 5.0, 50)):
             m_s = m_s_values[state]
             hfm_prob = get_HFM_prob(m_s, g, Z, logits=False)
             expected_ms += m_s * hfm_prob * empirical_prob
-           # expected_ms += m_s * empirical_prob  # Add the empirical contribution
+            #expected_ms += m_s * hfm_prob 
+           # expected_ms += m_s * empirical_prob 
         expected_ms_list.append(expected_ms)
 
     plt.figure(figsize=(8, 6))
